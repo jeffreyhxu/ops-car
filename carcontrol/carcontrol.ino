@@ -1,4 +1,5 @@
 /*The differences aren't much here, I just merged our two sources real quickly and updated the port locations and got it to compile */
+#include <limits.h>
 
 #define distsens_1 A5 //L
 #define distsens_2 A4 //Mid
@@ -23,7 +24,7 @@ const int SAMP = 10;
 int pwm_l = 0;
 int pwm_r = 0;
 
-inline void mode(struct pid*
+inline void mode(struct pid* in);
 
 inline void forward(){
     digitalWrite(h_in1, HIGH);
@@ -83,7 +84,7 @@ inline void curve_r(){
     digitalWrite(h_in2, LOW);
     digitalWrite(h_in3, HIGH);
     digitalWrite(h_in4, LOW);
-	return;
+  return;
 }
 template<class T> inline Print &operator <<(Print &obj, T arg) { obj.print(arg); return obj; }
 
@@ -127,6 +128,8 @@ void setup() {
 
 int lspeed, rspeed;
 const int RDLOW = 100, RDHIGH = 200;
+const int CLOW = 80; //This is a BS number, I have no idea what this is off the top of my head.
+const int MIN_WORKING_VARIANCE = 20;
 struct pid rmonitor;
 void loop() {
 /*+ * pseudocode:
@@ -136,7 +139,7 @@ void loop() {
 +   *    turn right a bit
 +   *  else if center < clow:
 +   *    keep going until center ~= left or right (whichever is pointing to a wall) #We can make this even easier by defining CLOW as calib[0] or calib[1], which we calibrate in the center of the road at the start between two walls.
-		Turn to open side. Go straight (goto start of loop)
+    Turn to open side. Go straight (goto start of loop)
 +   *  pid for right distance, error is difference from range rlow to rhigh, not just a set value
 +   */
   int left = analogRead(distsens_1);
@@ -148,32 +151,38 @@ void loop() {
   if(millis() % 500 == 0) {
     Serial.print("Left:  ");
     Serial.println(left);
-    Serial.print("Mid:   ");
+    Serial.print("\nMid:   ");
     Serial.println(mid);
-    Serial.print("Right: ");
+    Serial.print("\nRight: ");
     Serial.println(right);
+  Serial.print("\n");
   }
   
   int rerror = 0;
   if(right < RDLOW){ //Error is towards the right, adjust right motor speed;
     rerror = right - RDLOW;
-	pwm_r = rerror; //Should we map this?
+  pwm_r = rerror; //Should we map this?
   }
   else if(right > RDHIGH) {//Error is towards the left, adjust left motor speed
     rerror = right - RDHIGH;
-	pwm_r = rerror; //Our bounds for this is probably bad? from positive 0 - 255
+  pwm_r = rerror; //Our bounds for this is probably bad? from positive 0 - 255
   }
   if(mid < CLOW){
-	  //int Port; int distance;
-	  if(right < left){
-		  turn_l();
-	  }
-	  else if(left < right){
-		  turn_r;
-	  }
+    if((((right - left)&INT_MAX) < MIN_WORKING_VARIANCE) && (((mid - right)& INT_MAX) < MIN_WORKING_VARIANCE)){ //Just in case we get caught into a deadend, we simply go backwards
+      backward();
+    }
+    if(right < left && ((right - left)&INT_MAX < MIN_WORKING_VARIANCE)){
+      turn_l(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
+    }
+    else if(left < right && ((right - left)&INT_MAX < MIN_WORKING_VARIANCE)){
+      turn_r;
+    }
+  s_brake; //Something went wrong
+  Serial.print("Well fuck, looks like I'm stuck \n");
   }
   else{
-	  forward();
-	  getFix(&rmonitor, rerror);  
+    forward();
+    getFix(&rmonitor, rerror);  
   }
 }
+
