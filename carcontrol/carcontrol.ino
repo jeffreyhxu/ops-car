@@ -3,6 +3,7 @@
 #define distsens_1 A5 //L
 #define distsens_2 A4 //Mid
 #define distsens_3 A3 //Right
+#define h_in1 6 //d6 //Right Motor Digital Control
 #define h_in2 7 //d7
 #define h_in3 9 //D9 Left Motor Digital Control
 #define h_in4 10 //D10
@@ -22,7 +23,7 @@ const int SAMP = 10;
 int pwm_l = 0;
 int pwm_r = 0;
 
-inline void mode(struct pid* in);
+inline void mode(struct pid*
 
 inline void forward(){
     digitalWrite(h_in1, HIGH);
