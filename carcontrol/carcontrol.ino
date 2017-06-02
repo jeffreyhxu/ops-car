@@ -16,9 +16,9 @@
 struct pid { //Note that because we have two different types of distance sensors (Andrew's works a little differently than Jeffrey's we should have two different errors. To stay straight though we can just use one side right?)
   int integral = 0;
   int prev = 0;
-  int kp = -1; //the ks should be negative to counteract error
+  int kp = .7; //the ks should be negative to counteract error
   int ki = -1;
-  int kd = -1;
+  int kd = .5;
 };
 
 struct motor_val{
@@ -29,9 +29,13 @@ struct motor_val{
 const int DT = 1;
 long calib[3]; // minimum reading, theoretically infinite distance
 const int SAMP = 10;
-int pwm_l = 0;
-int pwm_r = 0;
 const long MAX_TURN_TIME = 200;
+const int RDLOW = 100, RDHIGH = 200;
+const int MIN_WORKING_VARIANCE = 20;
+const int min_wall_val = 200;
+const int default_speed = 150;
+struct pid rmonitor;
+
 
 inline void mode(struct pid* in);
 
@@ -158,11 +162,6 @@ void setup() {
 //  Serial << "True Average:\n" << avg;
 }
 
-int lspeed, rspeed;
-const int RDLOW = 100, RDHIGH = 200;
-const int MIN_WORKING_VARIANCE = 20;
-const int min_wall_val = 200;
-struct pid rmonitor;
 void loop() {
 /*+ * pseudocode:
 +   *  if right < rlow:  //For straight turning
@@ -174,6 +173,8 @@ void loop() {
     Turn to open side. Go straight (goto start of loop)
 +   *  pid for right distance, error is difference from range rlow to rhigh, not just a set value
 +   */
+  analogWrite(h_pwm_l, motor_val.l_motor);
+  analogWrite(h_pwm_r, motor_val.r_motor);
   int left = analogRead(distsens_1);
   int mid = analogRead(distsens_2);
   int right = analogRead(distsens_3);
@@ -192,17 +193,19 @@ void loop() {
     Serial.println(right);
   Serial.print("\n");
   }
-  /*
+  
   int rerror = 0;
-  if(right < RDLOW){ //Error is towards the right, adjust right motor speed;
+  if(right < 0){ //Error is towards the right, adjust right motor speed;
     rerror = right - RDLOW;
-    pwm_r = rerror; //Should we map this?
+    motor_val.l_motor = rerror; //There error is positive right?
+  motor_val.r_motor = default_speed;
   }
-  else if(right > RDHIGH) {//Error is towards the left, adjust left motor speed
+  else if(right > 0) {//Error is towards the left, adjust left motor speed
     rerror = right - RDHIGH;
-  pwm_r = rerror; //Our bounds for this is probably bad? from positive 0 - 255
+  motor_val.r_motor = rerror; //Our bounds for this is probably bad? from positive 0 - 255
+  motor_val.l_motor= default_speed;
   }
-  if(mid > min_wall_val){
+  if(mid > min_wall_val){ //If we've hit a wall, then do the following:
     int abs_difference = (right-left)&INT_MAX;
     if(((abs_difference) < MIN_WORKING_VARIANCE) && (((mid - right)& INT_MAX) < MIN_WORKING_VARIANCE)){ //Just in case we get caught into a deadend, we simply go backwards
       backward();
@@ -216,9 +219,9 @@ void loop() {
   s_brake; //Something went wrong
   Serial.print("Well fuck, looks like I'm stuck \n");
   }
-  else{
+  else{ //Middle sensor not at a wall, go forward
     forward();
     getFix(&rmonitor, rerror);  
-  }*/
+  }
 }
 
