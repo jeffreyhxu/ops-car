@@ -8,17 +8,17 @@
 #define h_in2 7 //d7
 #define h_in3 9 //D9 Left Motor Digital Control
 #define h_in4 10 //D10
-#define h_pwm_l 3 //D3 Left Motor Analog Write
-#define h_pwm_r 5 //D5 Right Motor Analog Write
+#define h_pwm_l 5 //D3 Left Motor Analog Write
+#define h_pwm_r 3 //D5 Right Motor Analog Write
 #define turn_right 0
 #define turn_left 1
 
 struct pid { //Note that because we have two different types of distance sensors (Andrew's works a little differently than Jeffrey's we should have two different errors. To stay straight though we can just use one side right?)
-  int integral = 0;
+  double integral = 0;
   int prev = 0;
-  int kp = .7; //the ks should be negative to counteract error
-  int ki = -1;
-  int kd = .5;
+  double kp = 1; //the ks should be negative to counteract error
+  double ki = 0;
+  double kd = 0.8;
 };
 
 struct motor_val{
@@ -33,8 +33,7 @@ const long MAX_TURN_TIME = 200;
 const int RDLOW = 100, RDHIGH = 200;
 const int MIN_WORKING_VARIANCE = 50;
 const int min_wall_val = 200;
-const int default_speed = 150;
-struct pid rmonitor;
+const int default_speed = 160;
 struct motor_val motors;
 
 inline void mode(struct pid* in);
@@ -44,7 +43,7 @@ inline int approx(int x, int y){ // &INT_MAX doesn't actually get the absolute v
   return (((x-y)^diff_neg)-diff_neg) < MIN_WORKING_VARIANCE;
 }
 
-inline void slowPrint(String s){
+template<class T> inline void slowPrint(T s){
   if(millis()%500 == 0)
     Serial.println(s);
 }
@@ -148,10 +147,13 @@ void resetPid(struct pid *e) {
 }
 
 int getFix(struct pid *e, int error) {
-  int d = (error - e->prev)/DT;
- //e->integral += e->error * DT;
+  double d = (error - e->prev)/DT;
+  e->integral += error * DT;
   e->prev = error;
-  return e->kp * error + e->ki * e->integral + e->kd * d;
+  //Serial.println((int)(e->kp * error));
+  //Serial.println((int)(e->ki * e->integral));
+  //Serial.println((int)(e->kd * d));
+  return (int)(e->kp * error + e->ki * e->integral + e->kd * d);
 }
 
 void setup() {
@@ -180,6 +182,8 @@ void setup() {
 //  Serial << "True Average:\n" << avg;
 }
 
+struct pid lmon;
+struct pid rmon;
 void loop() {
 /*+ * pseudocode:
 +   *  if right < rlow:  //For straight turning
@@ -205,6 +209,8 @@ void loop() {
   left -= calib[0];
   mid -= calib[1];
   right -= calib[2];
+  motors.r_motor = constrain(default_speed + getFix(&rmon, right), default_speed/2, 2*default_speed);
+  motors.l_motor = constrain(default_speed /*+ getFix(&lmon, left)*/, default_speed/2, 2*default_speed);
   if(millis() % 500 == 0) {
     Serial.print("Left:  ");
     Serial.println(left);
@@ -212,10 +218,12 @@ void loop() {
     Serial.println(mid);
     Serial.print("\nRight: ");
     Serial.println(right);
-  Serial.print("\n");
+    Serial.print("\n");
+    //Serial.println(motors.r_motor);
+    //Serial.println(motors.l_motor);
+    Serial.println(default_speed + getFix(&rmon, right));
   }
-  
-  int rerror = 0;
+  /*
   if(right < 0){ //Error is towards the right, adjust right motor speed;
     rerror = right - RDLOW;
     motors.l_motor = rerror; //There error is positive right?
@@ -225,7 +233,8 @@ void loop() {
     rerror = right - RDHIGH;
   motors.r_motor = rerror; //Our bounds for this is probably bad? from positive 0 - 255
   motors.l_motor= default_speed;
-  }
+  }*/
+  /*
   if(mid > min_wall_val){ //If we've hit a wall, then do the following:
     if(!approx(right, left)){
       if(right < left){
@@ -250,7 +259,7 @@ void loop() {
   }
   else{ //Middle sensor not at a wall, go forward
     forward();
-    getFix(&rmonitor, rerror);  
-  }
+    getFix(&rmonitor, right);  
+  }*/
 }
 
