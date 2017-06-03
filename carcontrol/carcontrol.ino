@@ -31,13 +31,23 @@ long calib[3]; // minimum reading, theoretically infinite distance
 const int SAMP = 10;
 const long MAX_TURN_TIME = 200;
 const int RDLOW = 100, RDHIGH = 200;
-const int MIN_WORKING_VARIANCE = 20;
+const int MIN_WORKING_VARIANCE = 50;
 const int min_wall_val = 200;
 const int default_speed = 150;
 struct pid rmonitor;
-
+struct motor_val motors;
 
 inline void mode(struct pid* in);
+
+inline int approx(int x, int y){ // &INT_MAX doesn't actually get the absolute value; -1 & INT_MAX returns INT_MAX instead of 1 or 0.
+  int diff_neg = (x-y)>>15;
+  return (((x-y)^diff_neg)-diff_neg) < MIN_WORKING_VARIANCE;
+}
+
+inline void slowPrint(String s){
+  if(millis()%500 == 0)
+    Serial.println(s);
+}
 
 inline void timed_turn(const int x){
   const int init_time = millis();
@@ -67,6 +77,7 @@ inline void forward(){
     digitalWrite(h_in2, LOW);
     digitalWrite(h_in3, HIGH);
     digitalWrite(h_in4, LOW);
+    slowPrint("F");
     return;
  }
 inline void backward(){
@@ -74,6 +85,7 @@ inline void backward(){
     digitalWrite(h_in2, HIGH);
     digitalWrite(h_in3, LOW);
     digitalWrite(h_in4, HIGH);
+    slowPrint("B");
     return;
  }
 
@@ -82,6 +94,7 @@ inline void s_brake(){
     digitalWrite(h_in2, HIGH);
     digitalWrite(h_in3, HIGH);
     digitalWrite(h_in4, HIGH);
+    slowPrint("STOP");
     return;
  }
 
@@ -90,6 +103,7 @@ inline void coast(){
     digitalWrite(h_in2, LOW);
     digitalWrite(h_in3, LOW);
     digitalWrite(h_in4, LOW);
+    slowPrint("COAST");
     return;
  }
 
@@ -98,6 +112,7 @@ inline void turn_l(){
     digitalWrite(h_in2, LOW);
     digitalWrite(h_in3, LOW);
     digitalWrite(h_in4, HIGH);
+    slowPrint("L");
     return;
   }
 inline void turn_r(){
@@ -105,6 +120,7 @@ inline void turn_r(){
     digitalWrite(h_in2, HIGH);
     digitalWrite(h_in3, HIGH);
     digitalWrite(h_in4, LOW);
+    slowPrint("R");
     return;
 }
 
@@ -113,6 +129,7 @@ inline void curve_l(){/*Curves around the left side of the rodent*/
     digitalWrite(h_in2, HIGH);
     digitalWrite(h_in3, LOW);
     digitalWrite(h_in4, LOW);
+    slowPrint("L CURVE");
     return;
 }
 inline void curve_r(){
@@ -120,7 +137,8 @@ inline void curve_r(){
     digitalWrite(h_in2, LOW);
     digitalWrite(h_in3, HIGH);
     digitalWrite(h_in4, LOW);
-  return;
+    slowPrint("R CURVE");
+    return;
 }
 template<class T> inline Print &operator <<(Print &obj, T arg) { obj.print(arg); return obj; }
 
@@ -173,8 +191,11 @@ void loop() {
     Turn to open side. Go straight (goto start of loop)
 +   *  pid for right distance, error is difference from range rlow to rhigh, not just a set value
 +   */
-  analogWrite(h_pwm_l, motor_val.l_motor);
-  analogWrite(h_pwm_r, motor_val.r_motor);
+/*
+ * General notes: the value of each sensor goes up when distance goes down.
+ */
+  analogWrite(h_pwm_l, motors.l_motor);
+  analogWrite(h_pwm_r, motors.r_motor);
   int left = analogRead(distsens_1);
   int mid = analogRead(distsens_2);
   int right = analogRead(distsens_3);
@@ -197,27 +218,35 @@ void loop() {
   int rerror = 0;
   if(right < 0){ //Error is towards the right, adjust right motor speed;
     rerror = right - RDLOW;
-    motor_val.l_motor = rerror; //There error is positive right?
-  motor_val.r_motor = default_speed;
+    motors.l_motor = rerror; //There error is positive right?
+  motors.r_motor = default_speed;
   }
   else if(right > 0) {//Error is towards the left, adjust left motor speed
     rerror = right - RDHIGH;
-  motor_val.r_motor = rerror; //Our bounds for this is probably bad? from positive 0 - 255
-  motor_val.l_motor= default_speed;
+  motors.r_motor = rerror; //Our bounds for this is probably bad? from positive 0 - 255
+  motors.l_motor= default_speed;
   }
   if(mid > min_wall_val){ //If we've hit a wall, then do the following:
-    int abs_difference = (right-left)&INT_MAX;
-    if(((abs_difference) < MIN_WORKING_VARIANCE) && (((mid - right)& INT_MAX) < MIN_WORKING_VARIANCE)){ //Just in case we get caught into a deadend, we simply go backwards
+    if(!approx(right, left)){
+      if(right < left){
+      if(millis()%500 == 0)
+      Serial.print("Right \n");
+        turn_r(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
+      }
+      else{
+      if(millis()%500 == 0)
+      Serial.print("Left \n");
+        turn_l();
+      }
+    }
+    else if(approx(mid, right)){ //Just in case we get caught into a deadend, we simply go backwards. This will mean we'd have to be watching left instead of right, so I'd prefer to turn 180 instead.
+      if(millis()%500 == 0)
+      Serial.print("Back \n");
       backward();
     }
-    if(right < left && abs_difference > MIN_WORKING_VARIANCE){
-      turn_r(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
+    else { // This is a T-junction. Wall in front, left and right are open.
+      turn_r();
     }
-    else if(left < right && (abs_difference> MIN_WORKING_VARIANCE)){ //& INT_MAX gets absolute value of the number, plus or minus 1. The difference of one shouldn't make a difference (hopefully).
-      turn_l();
-    }
-  s_brake; //Something went wrong
-  Serial.print("Well fuck, looks like I'm stuck \n");
   }
   else{ //Middle sensor not at a wall, go forward
     forward();
