@@ -10,21 +10,53 @@
 #define h_in4 10 //D10
 #define h_pwm_l 3 //D3 Left Motor Analog Write
 #define h_pwm_r 5 //D5 Right Motor Analog Write
+#define turn_right 0
+#define turn_left 1
 
-struct pid {
+struct pid { //Note that because we have two different types of distance sensors (Andrew's works a little differently than Jeffrey's we should have two different errors. To stay straight though we can just use one side right?)
   int integral = 0;
   int prev = 0;
   int kp = -1; //the ks should be negative to counteract error
   int ki = -1;
   int kd = -1;
 };
+
+struct motor_val{
+ motor_val(){l_motor = 0; r_motor = 0; return;}
+ int l_motor, r_motor;
+};
+
 const int DT = 1;
 long calib[3]; // minimum reading, theoretically infinite distance
 const int SAMP = 10;
 int pwm_l = 0;
 int pwm_r = 0;
+const long MAX_TURN_TIME = 200;
 
 inline void mode(struct pid* in);
+
+inline void timed_turn(const int x){
+  const int init_time = millis();
+  if(x == turn_right){
+    turn_r();
+    do{
+    analogWrite(h_pwm_l, 200);
+    analogWrite(h_pwm_r, 200);
+    } while(millis() - init_time < MAX_TURN_TIME);
+    analogWrite(h_pwm_l, 0);
+    analogWrite(h_pwm_r, 0);
+  }
+  else if(x == turn_left){
+    turn_l();
+    do{
+    analogWrite(h_pwm_l, 200);
+    analogWrite(h_pwm_r, 200);
+    } while(millis() - init_time < MAX_TURN_TIME);
+    analogWrite(h_pwm_l, 0);
+    analogWrite(h_pwm_r, 0);
+  }
+  return;
+}
 
 inline void forward(){
     digitalWrite(h_in1, HIGH);
@@ -119,7 +151,7 @@ void setup() {
   calib[0] /= SAMP;
   calib[1] /= SAMP;
   calib[2] /= SAMP;
-  coast();
+  forward();
   Serial.println(calib[0]);
   Serial.println(calib[1]);
   Serial.println(calib[2]);
@@ -128,8 +160,8 @@ void setup() {
 
 int lspeed, rspeed;
 const int RDLOW = 100, RDHIGH = 200;
-const int CLOW = 80; //This is a BS number, I have no idea what this is off the top of my head.
 const int MIN_WORKING_VARIANCE = 20;
+const int min_wall_val = 200;
 struct pid rmonitor;
 void loop() {
 /*+ * pseudocode:
@@ -145,6 +177,9 @@ void loop() {
   int left = analogRead(distsens_1);
   int mid = analogRead(distsens_2);
   int right = analogRead(distsens_3);
+
+  
+  
   left -= calib[0];
   mid -= calib[1];
   right -= calib[2];
@@ -157,25 +192,26 @@ void loop() {
     Serial.println(right);
   Serial.print("\n");
   }
-  
+  /*
   int rerror = 0;
   if(right < RDLOW){ //Error is towards the right, adjust right motor speed;
     rerror = right - RDLOW;
-  pwm_r = rerror; //Should we map this?
+    pwm_r = rerror; //Should we map this?
   }
   else if(right > RDHIGH) {//Error is towards the left, adjust left motor speed
     rerror = right - RDHIGH;
   pwm_r = rerror; //Our bounds for this is probably bad? from positive 0 - 255
   }
-  if(mid < CLOW){
-    if((((right - left)&INT_MAX) < MIN_WORKING_VARIANCE) && (((mid - right)& INT_MAX) < MIN_WORKING_VARIANCE)){ //Just in case we get caught into a deadend, we simply go backwards
+  if(mid > min_wall_val){
+    int abs_difference = (right-left)&INT_MAX;
+    if(((abs_difference) < MIN_WORKING_VARIANCE) && (((mid - right)& INT_MAX) < MIN_WORKING_VARIANCE)){ //Just in case we get caught into a deadend, we simply go backwards
       backward();
     }
-    if(right < left && ((right - left)&INT_MAX < MIN_WORKING_VARIANCE)){
-      turn_l(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
+    if(right < left && abs_difference > MIN_WORKING_VARIANCE){
+      turn_r(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
     }
-    else if(left < right && ((right - left)&INT_MAX < MIN_WORKING_VARIANCE)){
-      turn_r;
+    else if(left < right && (abs_difference> MIN_WORKING_VARIANCE)){ //& INT_MAX gets absolute value of the number, plus or minus 1. The difference of one shouldn't make a difference (hopefully).
+      turn_l();
     }
   s_brake; //Something went wrong
   Serial.print("Well fuck, looks like I'm stuck \n");
@@ -183,5 +219,5 @@ void loop() {
   else{
     forward();
     getFix(&rmonitor, rerror);  
-  }
+  }*/
 }
