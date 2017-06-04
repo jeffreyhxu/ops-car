@@ -2,8 +2,8 @@
 #include <limits.h>
 
 #define distsens_1 A5 //L
-#define distsens_2 A4 //Mid
-#define distsens_3 A3 //Right
+#define distsens_2 A3 //Mid
+#define distsens_3 A1 //Right
 #define h_in1 6 //d6 //Right Motor Digital Control
 #define h_in2 7 //d7
 #define h_in3 9 //D9 Left Motor Digital Control
@@ -27,12 +27,14 @@ struct motor_val{
 };
 
 const int DT = 1;
-long calib[3]; // minimum reading, theoretically infinite distance
-const int SAMP = 10;
+long calib[3]; // desired distance for left and right, far for center
+const int SAMP = 100; // # of samples averaged for calibration
+const int AVE = 10; // # of samples averaged for distance reading
 const long MAX_TURN_TIME = 200;
 const int RDLOW = 100, RDHIGH = 200;
 const int MIN_WORKING_VARIANCE = 50;
-const int min_wall_val = 200;
+const int min_wall_val = 200; // the closest we're going to get to a wall in front, higher than this means there's a wall in front
+const int min_wall_side = -60; // the farthest we're going to get to a wall on the side, higher than this means there's a wall on the side
 const int default_speed = 160;
 struct motor_val motors;
 
@@ -43,7 +45,8 @@ inline int approx(int x, int y){ // &INT_MAX doesn't actually get the absolute v
   return (((x-y)^diff_neg)-diff_neg) < MIN_WORKING_VARIANCE;
 }
 
-template<class T> inline void slowPrint(T s){
+template<typename T> inline void slowPrint(T s);
+template<typename T> inline void slowPrint(T s){
   if(millis()%500 == 0)
     Serial.println(s);
 }
@@ -156,6 +159,9 @@ int getFix(struct pid *e, int error) {
   return (int)(e->kp * error + e->ki * e->integral + e->kd * d);
 }
 
+int aleft[AVE], amid[AVE], aright[AVE];
+int count; // the index of the most recent read. Add 1 to get the one that will be removed.
+long dleft, dmid, dright;
 void setup() {
   Serial.begin(9600);
   pinMode(distsens_1, INPUT);
@@ -179,7 +185,15 @@ void setup() {
   Serial.println(calib[0]);
   Serial.println(calib[1]);
   Serial.println(calib[2]);
-//  Serial << "True Average:\n" << avg;
+  //  Serial << "True Average:\n" << avg;
+  for(count = 0; count < AVE; count++) {
+    aleft[count] = analogRead(distsens_1);
+    dleft += aleft[count];
+    amid[count] = analogRead(distsens_2);
+    dmid += amid[count];
+    aright[count] = analogRead(distsens_3);
+    dright += aright[count];
+  }
 }
 
 struct pid lmon;
@@ -200,17 +214,32 @@ void loop() {
  */
   analogWrite(h_pwm_l, motors.l_motor);
   analogWrite(h_pwm_r, motors.r_motor);
-  int left = analogRead(distsens_1);
-  int mid = analogRead(distsens_2);
-  int right = analogRead(distsens_3);
-
-  
+  count = (count + 1) % AVE;
+  dleft -= aleft[count];
+  dmid -= amid[count];
+  dright -= aright[count];
+  aleft[count] = analogRead(distsens_1);
+  amid[count] = analogRead(distsens_2);
+  aright[count] = analogRead(distsens_3);
+  dleft += aleft[count];
+  dmid += amid[count];
+  dright += aright[count];
+  int left = (int)(dleft / AVE);
+  int mid = (int)(dmid / AVE);
+  int right = (int)(dright / AVE);
   
   left -= calib[0];
   mid -= calib[1];
   right -= calib[2];
-  motors.r_motor = constrain(default_speed + getFix(&rmon, right), default_speed/2, 2*default_speed);
-  motors.l_motor = constrain(default_speed /*+ getFix(&lmon, left)*/, default_speed/2, 2*default_speed);
+  // Going straight
+  if(right > min_wall_side) { // follow the right wall if it's going straight
+    motors.r_motor = constrain(default_speed + getFix(&rmon, right), default_speed/4, 2*default_speed);
+    motors.l_motor = default_speed;
+  }
+  else if(left > min_wall_side) { // otherwise follow the left wall if it's going straight
+    motors.r_motor = default_speed;
+    motors.l_motor = constrain(default_speed + getFix(&lmon, left), default_speed/4, 2*default_speed);
+  } // otherwise you're probably fine, just keep speeds the same
   if(millis() % 500 == 0) {
     Serial.print("Left:  ");
     Serial.println(left);
@@ -221,7 +250,7 @@ void loop() {
     Serial.print("\n");
     //Serial.println(motors.r_motor);
     //Serial.println(motors.l_motor);
-    Serial.println(default_speed + getFix(&rmon, right));
+    //Serial.println(default_speed + getFix(&rmon, right));
   }
   /*
   if(right < 0){ //Error is towards the right, adjust right motor speed;
@@ -234,32 +263,34 @@ void loop() {
   motors.r_motor = rerror; //Our bounds for this is probably bad? from positive 0 - 255
   motors.l_motor= default_speed;
   }*/
-  /*
+  
   if(mid > min_wall_val){ //If we've hit a wall, then do the following:
     if(!approx(right, left)){
       if(right < left){
-      if(millis()%500 == 0)
-      Serial.print("Right \n");
+        if(millis()%500 == 0)
+          Serial.print("Right \n");
         turn_r(); //Our code may naturally want to just go right based off of pwm. If it does great. Otherwise, we can just force it to spin for a set amount of time, and then just use PID to stay in the center.
+        while(mid > min_wall_val) {} // turn until the mid sensor is not facing a wall. PID should straighten it out.
       }
       else{
-      if(millis()%500 == 0)
-      Serial.print("Left \n");
+        if(millis()%500 == 0)
+          Serial.print("Left \n");
         turn_l();
+        while(mid > min_wall_val) {}
       }
     }
-    else if(approx(mid, right)){ //Just in case we get caught into a deadend, we simply go backwards. This will mean we'd have to be watching left instead of right, so I'd prefer to turn 180 instead.
-      if(millis()%500 == 0)
-      Serial.print("Back \n");
-      backward();
+    else if(approx(mid, right)){ //Just in case we get caught into a deadend, we simply go backwards. This will mean we'd have to be watching left instead of right, so I'd prefer to turn 180 instead. This shouldn't happen.
+      //if(millis()%500 == 0)
+      //  Serial.print("Back \n");
+      //backward();
+      turn_l();
+      while(mid > min_wall_val) {}
     }
-    else { // This is a T-junction. Wall in front, left and right are open.
+    else { // This is a T-junction. Wall in front, left and right are open. This shouldn't happen.
       turn_r();
+      while(mid > min_wall_val) {}
     }
   }
-  else{ //Middle sensor not at a wall, go forward
-    forward();
-    getFix(&rmonitor, right);  
-  }*/
+  forward();
 }
 
